@@ -58,13 +58,67 @@ const fold = (text) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
-/** Índice do início da última frase, mesmo sem espaço após o ponto. */
 function sentenceBoundary(text) {
   let index = -1;
   const re = /[.!?](?=\s|$|[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g;
   let match;
   while ((match = re.exec(text)) !== null) index = match.index;
   return index;
+}
+
+function prepareSermon(sermon) {
+  if (!sermon) sermon = {};
+
+  let sections = sermon.sections;
+  if (!sections && sermon.content) {
+    try {
+      const parsed = typeof sermon.content === 'string' ? JSON.parse(sermon.content) : sermon.content;
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.sections) {
+          sections = parsed.sections;
+        } else if (parsed.text !== undefined) {
+          sections = {
+            introduction: { html: parsed.text || '' },
+            developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
+            conclusion: { html: '' },
+          };
+        }
+      }
+    } catch {
+      sections = {
+        introduction: { html: typeof sermon.content === 'string' ? sermon.content : '' },
+        developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
+        conclusion: { html: '' },
+      };
+    }
+  }
+
+  if (!sections) {
+    sections = {
+      introduction: { html: '' },
+      developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
+      conclusion: { html: '' },
+    };
+  }
+
+  return {
+    ...sermon,
+    title: sermon.title || 'Sem título',
+    theme: sermon.theme || '',
+    tags: Array.isArray(sermon.tags) ? sermon.tags : [],
+    sections: {
+      introduction: { html: sections.introduction?.html || '' },
+      developments:
+        Array.isArray(sections.developments) && sections.developments.length > 0
+          ? sections.developments.map((d, i) => ({
+              id: d.id || `dev_${i + 1}`,
+              title: d.title || `Ponto ${i + 1}`,
+              html: d.html || '',
+            }))
+          : [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
+      conclusion: { html: sections.conclusion?.html || '' },
+    },
+  };
 }
 
 export default function Editor({
@@ -78,8 +132,8 @@ export default function Editor({
   onCalibrate,
 }) {
   const { toast, error: toastError } = useToast();
-  const [draft, setDraft] = useState(sermon);
-  const draftRef = useRef(sermon);
+  const [draft, setDraft] = useState(() => prepareSermon(sermon));
+  const draftRef = useRef(prepareSermon(sermon));
   const [saveState, setSaveState] = useState('saved');
   const [activeId, setActiveId] = useState('introduction');
   const [suggestion, setSuggestion] = useState(null);
@@ -113,6 +167,12 @@ export default function Editor({
   const translation = draft.settings?.translation || profile?.settings?.translation || 'ARA';
   const wpm = profile?.wpm || 150;
 
+  useEffect(() => {
+    const prepared = prepareSermon(sermon);
+    setDraft(prepared);
+    draftRef.current = prepared;
+  }, [sermon]);
+
   const metrics = useMemo(() => {
     const sections = draft.sections || {};
     const per = (html) => {
@@ -134,7 +194,7 @@ export default function Editor({
     };
   }, [draft.sections, wpm]);
 
-  // ---------- carregamento de música ----------
+  // Carregamento de música
   useEffect(() => {
     api.musicFeatured().then((r) => setFeatured(r.featured || [])).catch(() => {});
     api.musicStatus().then((r) => setMusicStatus(r.configured || null)).catch(() => {});
@@ -152,7 +212,7 @@ export default function Editor({
     [],
   );
 
-  // ---------- foco ----------
+  // Foco
   useEffect(() => {
     if (!focusTarget) return;
     const instance = richRefs.current.get(focusTarget);
@@ -163,7 +223,7 @@ export default function Editor({
       activeElRef.current = el;
     }
     setFocusTarget(null);
-  }, [focusTarget, draft.sections.developments.length]);
+  }, [focusTarget, draft.sections?.developments?.length]);
 
   useEffect(() => {
     const onSelectionChange = () => {
@@ -184,7 +244,7 @@ export default function Editor({
     return () => window.removeEventListener('scroll', onScroll, true);
   }, []);
 
-  // ---------- salvar ----------
+  // Salvar
   async function persist(nextDraft) {
     const seq = ++saveSeq.current;
     setSaveState('saving');
@@ -205,7 +265,11 @@ export default function Editor({
         metrics: saved.metrics,
         updatedAt: saved.updatedAt,
       }));
-      draftRef.current = { ...draftRef.current, tags: tagsTouched.current ? draftRef.current.tags : saved.tags, updatedAt: saved.updatedAt };
+      draftRef.current = {
+        ...draftRef.current,
+        tags: tagsTouched.current ? draftRef.current.tags : saved.tags,
+        updatedAt: saved.updatedAt,
+      };
       onSaved?.(saved);
       return saved;
     } catch (err) {
@@ -247,37 +311,41 @@ export default function Editor({
     onBack();
   };
 
-  // ---------- seções ----------
+  // Seções
   const updateSectionHtml = (id, html) => {
     updateDraft((current) => {
+      const sections = current.sections || { introduction: {}, developments: [], conclusion: {} };
       if (id === 'introduction') {
-        return { ...current, sections: { ...current.sections, introduction: { html } } };
+        return { ...current, sections: { ...sections, introduction: { ...sections.introduction, html } } };
       }
       if (id === 'conclusion') {
-        return { ...current, sections: { ...current.sections, conclusion: { html } } };
+        return { ...current, sections: { ...sections, conclusion: { ...sections.conclusion, html } } };
       }
       return {
         ...current,
         sections: {
-          ...current.sections,
-          developments: current.sections.developments.map((dev) => (dev.id === id ? { ...dev, html } : dev)),
+          ...sections,
+          developments: (sections.developments || []).map((dev) => (dev.id === id ? { ...dev, html } : dev)),
         },
       };
     });
   };
 
   const updateDevTitle = (id, title) => {
-    updateDraft((current) => ({
-      ...current,
-      sections: {
-        ...current.sections,
-        developments: current.sections.developments.map((dev) => (dev.id === id ? { ...dev, title } : dev)),
-      },
-    }));
+    updateDraft((current) => {
+      const sections = current.sections || { introduction: {}, developments: [], conclusion: {} };
+      return {
+        ...current,
+        sections: {
+          ...sections,
+          developments: (sections.developments || []).map((dev) => (dev.id === id ? { ...dev, title } : dev)),
+        },
+      };
+    });
   };
 
   const addDevelopment = () => {
-    const list = draftRef.current.sections.developments;
+    const list = draftRef.current.sections?.developments || [];
     if (list.length >= 16) {
       toast('Dezesseis pontos já é bastante — talvez seja hora de agrupar ideias.');
       return;
@@ -287,7 +355,7 @@ export default function Editor({
       ...current,
       sections: {
         ...current.sections,
-        developments: [...current.sections.developments, { id, title: `Ponto ${list.length + 1}`, html: '' }],
+        developments: [...(current.sections?.developments || []), { id, title: `Ponto ${list.length + 1}`, html: '' }],
       },
     }));
     setFocusTarget(id);
@@ -299,7 +367,7 @@ export default function Editor({
   };
 
   const removeDevelopment = (id) => {
-    const list = draftRef.current.sections.developments;
+    const list = draftRef.current.sections?.developments || [];
     if (list.length <= 1) {
       toast('Mantenha ao menos um ponto — ou escreva tudo na introdução.');
       return;
@@ -308,14 +376,14 @@ export default function Editor({
       ...current,
       sections: {
         ...current.sections,
-        developments: current.sections.developments.filter((dev) => dev.id !== id),
+        developments: (current.sections?.developments || []).filter((dev) => dev.id !== id),
       },
     }));
   };
 
   const moveDevelopment = (id, direction) => {
     updateDraft((current) => {
-      const list = [...current.sections.developments];
+      const list = [...(current.sections?.developments || [])];
       const index = list.findIndex((dev) => dev.id === id);
       const target = index + direction;
       if (index < 0 || target < 0 || target >= list.length) return current;
@@ -324,7 +392,7 @@ export default function Editor({
     });
   };
 
-  // ---------- inserção ----------
+  // Inserção
   const insertHtml = (html, { close = true, count = 1 } = {}) => {
     const id = activeId;
     const instance = richRefs.current.get(id) || richRefs.current.get('introduction');
@@ -344,7 +412,6 @@ export default function Editor({
         const after = document.createRange();
         after.setStartAfter(refSpan);
         after.collapse(true);
-        // se a referência estava entre parênteses, posiciona depois do ")"
         const next = refSpan.nextSibling;
         if (next && next.nodeType === Node.TEXT_NODE) {
           const match = /^[)\],;:!?.]+\s*/.exec(next.nodeValue);
@@ -367,7 +434,7 @@ export default function Editor({
       before.selectNodeContents(el);
       before.setEnd(caret.startContainer, caret.startOffset);
       const text = before.toString();
-      if (text && !/[ \u00a0]$/.test(text)) prefix = '&nbsp;';
+      if (text && !/[ \u00a0]$/.test(text)) prefix = ' ';
     }
     const payload = `${prefix}${html}`;
 
@@ -401,7 +468,7 @@ export default function Editor({
     insertHtml(`“${verse.text}” (${ref})`);
   };
 
-  // ---------- referências / tooltip ----------
+  // Referências / Tooltip
   const showTooltip = (ref, rect) => {
     if (!ref || !rect) return;
     clearTimeout(hideTooltipTimer.current);
@@ -422,7 +489,7 @@ export default function Editor({
     hideTooltipTimer.current = setTimeout(() => setTooltip(null), 200);
   };
 
-  // ---------- autocompletar ----------
+  // Autocompletar
   const maybeSuggest = async (el, manual = false) => {
     if (!el || !selectionInside(el)) {
       if (manual) toast('Clique dentro do texto e deixe o cursor no fim do trecho.');
@@ -451,10 +518,7 @@ export default function Editor({
       }
     }
     if (!raw) {
-      const boundary = Math.max(
-        sentenceBoundary(tail),
-        tail.lastIndexOf('\n'),
-      );
+      const boundary = Math.max(sentenceBoundary(tail), tail.lastIndexOf('\n'));
       raw = tail.slice(boundary + 1);
     }
     raw = raw.replace(/^\s+/, '');
@@ -484,7 +548,6 @@ export default function Editor({
     try {
       const result = await api.suggest(candidate, translation, controller.signal);
       if (controller.signal.aborted) return;
-      // o texto pode ter mudado enquanto a API respondia
       const currentTail = textBeforeCaret(el, 300);
       if (!currentTail || !currentTail.trimEnd().endsWith(candidate)) return;
       if (result?.match && result.match.score >= 0.7 && result.match.text) {
@@ -582,7 +645,7 @@ export default function Editor({
     }
   };
 
-  // ---------- tags ----------
+  // Tags
   const addTag = (value) => {
     const clean = String(value || '').trim();
     if (!clean) return;
@@ -602,9 +665,9 @@ export default function Editor({
   const suggestTags = async () => {
     try {
       const text = [
-        draftRef.current.sections.introduction?.html,
-        ...(draftRef.current.sections.developments || []).flatMap((dev) => [dev.title, dev.html]),
-        draftRef.current.sections.conclusion?.html,
+        draftRef.current.sections?.introduction?.html,
+        ...(draftRef.current.sections?.developments || []).flatMap((dev) => [dev.title, dev.html]),
+        draftRef.current.sections?.conclusion?.html,
       ].join(' ');
       const result = await api.analyze(text, draftRef.current.title, draftRef.current.theme);
       tagsTouched.current = true;
@@ -615,7 +678,7 @@ export default function Editor({
     }
   };
 
-  // ---------- ambiente ----------
+  // Ambiente
   const toggleAmbient = () => {
     if (!ambientRef.current) ambientRef.current = createAmbient();
     if (ambientOn) {
@@ -632,10 +695,9 @@ export default function Editor({
     ambientRef.current?.setVolume(ambientVolume);
   }, [ambientVolume]);
 
-  // ---------- render ----------
   const introWords = metrics.sections.introduction.words;
   const conclusionWords = metrics.sections.conclusion.words;
-  const devs = draft.sections.developments;
+  const devs = draft.sections?.developments || [];
 
   return (
     <div className="editor-shell" onMouseDown={() => setSuggestion(null)}>
@@ -683,14 +745,14 @@ export default function Editor({
 
         <input
           className="editor-title"
-          value={draft.title}
+          value={draft.title || ''}
           placeholder="Título do sermão"
           maxLength={180}
           onChange={(event) => updateDraft((current) => ({ ...current, title: event.target.value }))}
         />
         <input
           className="editor-theme"
-          value={draft.theme}
+          value={draft.theme || ''}
           placeholder="Tema — o fio que conduz a mensagem"
           maxLength={180}
           onChange={(event) => updateDraft((current) => ({ ...current, theme: event.target.value }))}
@@ -768,7 +830,7 @@ export default function Editor({
                     <span className="dev-index">{index + 1}</span>
                     <input
                       className="dev-title"
-                      value={dev.title}
+                      value={dev.title || ''}
                       placeholder={`Ponto ${index + 1}`}
                       maxLength={140}
                       onChange={(event) => updateDevTitle(dev.id, event.target.value)}
@@ -800,7 +862,7 @@ export default function Editor({
                       if (instance) richRefs.current.set(dev.id, instance);
                       else richRefs.current.delete(dev.id);
                     }}
-                    value={dev.html}
+                    value={dev.html || ''}
                     onChange={(html) => updateSectionHtml(dev.id, html)}
                     sectionId={dev.id}
                     onFocusEditor={(id, el) => {

@@ -4,6 +4,7 @@ import Library from './components/Library.jsx';
 import Editor from './components/Editor.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import CalibrationModal from './components/CalibrationModal.jsx';
+import AuthModal from './components/AuthModal.jsx';
 import { useToast } from './components/Toast.jsx';
 import { api } from './lib/api.js';
 import Icon from './components/Icon.jsx';
@@ -17,6 +18,11 @@ const FALLBACK_VERSIONS = [
   { id: 'NVT', name: 'Nova Versão Transformadora' },
 ];
 
+function getValidToken() {
+  const t = localStorage.getItem('pulpito_token');
+  return t && t !== 'undefined' && t !== 'null' ? t : null;
+}
+
 function readRoute() {
   const hash = window.location.hash.replace(/^#\/?/, '');
   const match = hash.match(/^sermao\/([^/]+)$/);
@@ -25,6 +31,7 @@ function readRoute() {
 
 export default function App() {
   const { toast, error: toastError } = useToast();
+  const [token, setToken] = useState(() => getValidToken());
   const [route, setRoute] = useState(() => readRoute());
   const [profile, setProfile] = useState(null);
   const [versions, setVersions] = useState(FALLBACK_VERSIONS);
@@ -42,7 +49,7 @@ export default function App() {
   const loadedIdRef = useRef(null);
 
   const applyProfile = (nextProfile) => {
-    setProfile(nextProfile);
+    setProfile(nextProfile || {});
     if (nextProfile?.settings?.theme) {
       setTheme(nextProfile.settings.theme);
     }
@@ -53,36 +60,54 @@ export default function App() {
     api.saveProfile({ settings: { theme: next } }).catch(() => {});
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('pulpito_token');
+    localStorage.removeItem('pulpito_user');
+    window.location.hash = '';
+    setToken(null);
+    setCurrent(null);
+    setSermons([]);
+  };
+
   const refreshLibrary = async () => {
     try {
       const [list, statsData] = await Promise.all([api.listSermons(), api.stats()]);
-      setSermons(list.sermons || []);
+      setSermons(list?.sermons || []);
       setStats(statsData);
     } catch (err) {
       toastError(err.message);
     }
   };
 
+  // 1. Carregamento inicial de dados
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
+    setLoading(true);
+    setBootError(null);
+
     (async () => {
       try {
         const [profileData, versionsData, list, statsData] = await Promise.all([
-          api.profile(),
+          api.profile().catch(() => ({ profile: {}, sample: null })),
           api.versions().catch(() => ({ portuguese: FALLBACK_VERSIONS })),
-          api.listSermons(),
-          api.stats(),
+          api.listSermons().catch(() => ({ sermons: [] })),
+          api.stats().catch(() => ({ total: 0, total_words: 0 })),
         ]);
         if (cancelled) return;
-        applyProfile(profileData.profile);
-        setSample(profileData.sample);
-        setVersions(versionsData.portuguese?.length ? versionsData.portuguese : FALLBACK_VERSIONS);
-        setSermons(list.sermons || []);
+        applyProfile(profileData?.profile);
+        setSample(profileData?.sample || null);
+        setVersions(versionsData?.portuguese?.length ? versionsData.portuguese : FALLBACK_VERSIONS);
+        setSermons(list?.sermons || []);
         setStats(statsData);
         setLoading(false);
       } catch (err) {
         if (!cancelled) {
-          setBootError(err.message);
+          if (err.status === 401 || err.message?.includes('Sessão') || err.message?.includes('autorizado')) {
+            handleLogout();
+          } else {
+            setBootError(err.message || 'Erro de conexão com o servidor.');
+          }
           setLoading(false);
         }
       }
@@ -90,41 +115,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [token]);
 
-  // tema + tipografia
+  // Tema + Tipografia
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('pulpito:theme', theme);
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#12110f' : '#f3ede2');
   }, [theme]);
 
-  useEffect(() => {
-    const settings = profile?.settings;
-    if (!settings) return;
-    const root = document.documentElement;
-    root.style.setProperty('--editor-size', `${settings.fontSize || 19}px`);
-    root.style.setProperty(
-      '--editor-font',
-      settings.fontFamily === 'sans' ? 'var(--sans)' : 'var(--serif)',
-    );
-  }, [profile]);
-
-  useEffect(() => {
-    localStorage.setItem('pulpito:focus', focusMode ? '1' : '0');
-    if (!focusMode) return;
-    const onKey = (event) => {
-      if (event.key === 'Escape') {
-        setFocusMode(false);
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [focusMode]);
-
-  // rota / botão voltar do navegador
+  // Rotas da URL
   useEffect(() => {
     const onPop = () => setRoute(readRoute());
     window.addEventListener('popstate', onPop);
@@ -132,7 +131,7 @@ export default function App() {
   }, []);
 
   const loadSermon = async (id) => {
-    if (!id) return;
+    if (!id || !token) return;
     if (current?.id === id) return;
     setLoadingSermon(true);
     try {
@@ -141,27 +140,20 @@ export default function App() {
       loadedIdRef.current = id;
       setRoute({ view: 'editor', id });
       window.scrollTo({ top: 0 });
-    } catch (err) {
-      toastError(err.message);
-      window.history.replaceState(null, '', '#/');
+    } catch {
+      window.history.replaceState(null, '', window.location.pathname);
       setRoute({ view: 'library', id: null });
+      setCurrent(null);
     } finally {
       setLoadingSermon(false);
     }
   };
 
   useEffect(() => {
-    if (route.view === 'editor' && route.id && route.id !== current?.id) {
+    if (token && route.view === 'editor' && route.id && route.id !== current?.id) {
       loadSermon(route.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route]);
-
-  const openSermon = (id) => {
-    window.history.pushState(null, '', `#/sermao/${id}`);
-    setRoute({ view: 'editor', id });
-    loadSermon(id);
-  };
+  }, [route, token]);
 
   const goLibrary = () => {
     window.history.pushState(null, '', '#/');
@@ -209,7 +201,7 @@ export default function App() {
 
   const saveSettings = async (patch) => {
     const result = await api.saveProfile(patch);
-    applyProfile(result.profile);
+    applyProfile(result?.profile);
     if (patch.settings?.theme) setTheme(patch.settings.theme);
     await refreshLibrary();
     toast('Ajustes salvos');
@@ -219,8 +211,8 @@ export default function App() {
     if (nextProfile) applyProfile(nextProfile);
     else {
       const data = await api.profile();
-      applyProfile(data.profile);
-      setSample(data.sample);
+      applyProfile(data?.profile);
+      setSample(data?.sample);
     }
     await refreshLibrary();
     toast('Ritmo atualizado');
@@ -235,15 +227,21 @@ export default function App() {
     if (!sample) {
       try {
         const data = await api.profile();
-        setSample(data.sample);
-        applyProfile(data.profile);
+        setSample(data?.sample);
+        applyProfile(data?.profile);
       } catch {
-        /* segue com o texto padrão do modal */
+        /* ignora */
       }
     }
     setCalibrating(true);
   };
 
+  // 1. Sem Token -> Form de Autenticação
+  if (!token) {
+    return <AuthModal onLoginSuccess={(newToken) => setToken(newToken)} />;
+  }
+
+  // 2. A carregar
   if (loading) {
     return (
       <div className="app" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -262,6 +260,7 @@ export default function App() {
     );
   }
 
+  // 3. Erro de Inicialização
   if (bootError) {
     return (
       <div className="app" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
@@ -271,18 +270,26 @@ export default function App() {
           </div>
           <h3>Não foi possível abrir o Púlpito</h3>
           <p>{bootError}</p>
-          <p className="small muted" style={{ marginTop: 10 }}>
-            Verifique se a API está rodando em <code>http://127.0.0.1:4000</code> (use{' '}
-            <code>npm run dev</code>).
-          </p>
-          <button className="btn btn-primary mt-4" onClick={() => window.location.reload()}>
-            Tentar novamente
-          </button>
+          <div className="row" style={{ justifyContent: 'center', gap: 12, marginTop: 16 }}>
+            <button className="btn btn-secondary" onClick={handleLogout}>
+              Trocar de Conta
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                window.location.hash = '';
+                window.location.reload();
+              }}
+            >
+              Tentar novamente
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
+  // 4. Interface Principal
   return (
     <div className={`app ${focusMode ? 'is-focus' : ''}`}>
       <TopBar
@@ -315,7 +322,11 @@ export default function App() {
           profile={profile}
           loading={loadingSermon}
           onCreate={createSermon}
-          onOpen={openSermon}
+          onOpen={(id) => {
+            window.history.pushState(null, '', `#/sermao/${id}`);
+            setRoute({ view: 'editor', id });
+            loadSermon(id);
+          }}
           onDelete={deleteSermon}
           onDuplicate={duplicateSermon}
           onCalibrate={openCalibration}
