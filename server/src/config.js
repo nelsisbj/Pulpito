@@ -24,8 +24,8 @@ try {
   /* .env é opcional */
 }
 
-export const PORT = Number(process.env.PORT || 4000);
-export const HOST = process.env.HOST || '127.0.0.1';
+export const PORT = process.env.PORT || 4000;
+export const HOST = process.env.HOST || '0.0.0.0';
 export const DATA_DIR = process.env.PULPITO_DATA_DIR || path.join(ROOT, 'data');
 export const CACHE_DIR = path.join(DATA_DIR, 'cache');
 export const PDF_DIR = path.join(DATA_DIR, 'pdfs');
@@ -37,14 +37,13 @@ export const SEED_DIR = path.join(ROOT, 'server', 'src', 'data');
 
 export const BIBLE_BASE = process.env.BIBLE_API_BASE || 'https://bolls.life';
 
-// Traduções com texto liberado para uso. A NVI/NVIPT é bloqueada pela editora
-// e retorna uma mensagem de protesto no lugar dos versículos — fica de fora.
+// Traduções com texto liberado para uso.
 export const BLOCKED_TRANSLATIONS = new Set(['NVIPT', 'NIV', 'NVI']);
 
 export const DEFAULT_TRANSLATION = process.env.DEFAULT_TRANSLATION || 'ARA';
 export const DEFAULT_COMPARE = ['ARA', 'NAA', 'NTLH'];
-export const PUBLIC_URL = process.env.PULPITO_PUBLIC_URL || '';
-export const ACCESS_PASSWORD = process.env.PULPITO_ACCESS_PASSWORD || '';
+export const PUBLIC_URL = process.env.PULPITO_PUBLIC_URL || process.env.PUBLIC_URL || '';
+export const ACCESS_PASSWORD = process.env.PULPITO_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || '';
 
 export const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 export const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || '';

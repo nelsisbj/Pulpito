@@ -25,7 +25,7 @@ if (ACCESS_PASSWORD) {
   app.use(access.middleware);
 }
 
-// CORS simples para desenvolvimento (Vite usa proxy, mas isso ajuda testes diretos).
+// CORS simples para desenvolvimento e produção
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -47,9 +47,8 @@ app.get('/api/health', (_req, res) => {
 
 /*
  * Quando o servidor é aberto para a rede (HOST=0.0.0.0), outros dispositivos
- * podem abrir os links /s/<token>, mas não o editor. O dono continua editando
- * por 127.0.0.1. Para liberar edição remota de propósito, use
- * PULPITO_ALLOW_REMOTE_EDIT=1.
+ * podem abrir os links /s/<token>, mas não o editor. Para liberar o editor no Render,
+ * defina a variável de ambiente PULPITO_ALLOW_REMOTE_EDIT=1 no painel do Render.
  */
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const remoteReadOnly = process.env.PULPITO_ALLOW_REMOTE_EDIT !== '1';
@@ -80,7 +79,7 @@ app.use((req, res, next) => {
     return res.status(403).type('html').send(remoteNotice());
   }
   return res.status(403).json({
-    error: 'O Púlpito está em modo somente leitura para outros dispositivos. Use um link de compartilhamento.',
+    error: 'O Púlpito está em modo somente leitura para outros dispositivos. Use um link de compartilhamento ou configure PULPITO_ALLOW_REMOTE_EDIT=1.',
     code: 'remote_readonly',
   });
 });
