@@ -13,6 +13,7 @@ import musicRoutes from './routes/music.js';
 import shareRoutes, { sharePage } from './routes/share.js';
 import { BibleError } from './providers/bolls.js';
 import { closePdfBrowser } from './services/pdf.js';
+import authRoutes from './routes/auth.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -107,6 +108,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/music', musicRoutes);
 app.use('/api/share', shareRoutes);
 app.get('/s/:token', sharePage);
+app.use('/api/auth', authRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Rota não encontrada.', code: 'not_found' });

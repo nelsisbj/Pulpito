@@ -1,78 +1,91 @@
 import express from 'express';
-import { db, findSermonByShareToken, publicSermon } from '../db.js';
-import { asyncHandler, HttpError } from '../lib/http.js';
-import { generateAndStore, pdfFilename, renderPrintHtml } from '../services/pdf.js';
+import { pool } from '../db.js';
 
 const router = express.Router();
 
-function resolve(token) {
-  const sermon = findSermonByShareToken(token);
-  if (!sermon) throw new HttpError('Link inválido ou revogado.', 404, 'share_not_found');
-  return sermon;
-}
-
-function publicShare(sermon) {
-  const full = publicSermon(sermon, db().profile);
-  return {
-    title: full.title,
-    theme: full.theme,
-    tags: full.tags,
-    sections: full.sections,
-    createdAt: full.createdAt,
-    updatedAt: full.updatedAt,
-    metrics: full.metrics,
-    sharedAt: sermon.share?.createdAt || null,
-  };
-}
-
-router.get('/:token', (req, res) => {
-  const sermon = resolve(req.params.token);
-  res.set('Cache-Control', 'no-store');
-  res.json({ sermon: publicShare(sermon) });
-});
-
-router.get('/:token/pdf', asyncHandler(async (req, res) => {
-  const sermon = resolve(req.params.token);
-  const { buffer } = await generateAndStore(sermon.id, { force: true });
-  if (!buffer) throw new HttpError('Não foi possível gerar o PDF.', 503, 'pdf_failed');
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${pdfFilename(sermon)}"`);
-  res.setHeader('Content-Length', buffer.length);
-  res.send(buffer);
-}));
-
-router.get('/:token/print', (req, res) => {
-  const sermon = resolve(req.params.token);
-  res.set('Cache-Control', 'no-store');
-  res.type('html').send(
-    renderPrintHtml(sermon, db().profile, { autoPrint: req.query.auto === '1' }),
+// Busca o sermão pelo token de compartilhamento salvo em content (JSONB)
+export async function findSermonByShareToken(token) {
+  const result = await pool.query(
+    `SELECT * FROM sermons 
+     WHERE content->>'shareToken' = $1 
+        OR content->'share'->>'token' = $1 
+     LIMIT 1`,
+    [token]
   );
-});
-
-function notFoundPage() {
-  return `<!doctype html>
-<html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Link inválido · Púlpito</title>
-<style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3ede2;color:#211d17;font-family:Georgia,serif}
-.box{max-width:420px;padding:36px;text-align:center}
-h1{font-size:26px;margin:0 0 8px}
-p{font-family:Arial,sans-serif;font-size:14px;color:#6f6558;line-height:1.6}
-</style></head>
-<body><div class="box"><h1>Este link não está disponível</h1><p>Ele pode ter sido revogado ou o sermão foi removido. Peça um novo link a quem compartilhou.</p></div></body></html>`;
+  return result.rows[0] || null;
 }
 
-/** Página pública, renderizada no servidor, sem o editor. */
-export function sharePage(req, res) {
-  const sermon = findSermonByShareToken(req.params.token);
-  if (!sermon) {
-    return res.status(404).type('html').send(notFoundPage());
+// GET /api/share/:token (retorno via JSON)
+router.get('/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const sermon = await findSermonByShareToken(token);
+    
+    if (!sermon) {
+      return res.status(404).json({ error: 'Sermão não encontrado ou link expirado.' });
+    }
+
+    res.json({
+      id: sermon.id,
+      title: sermon.title,
+      content: sermon.content,
+      createdAt: sermon.created_at,
+      updatedAt: sermon.updated_at,
+    });
+  } catch (err) {
+    console.error('[share api error]', err);
+    res.status(500).json({ error: 'Erro ao carregar sermão compartilhado.' });
   }
-  res.set('Cache-Control', 'no-store');
-  res.set('X-Robots-Tag', 'noindex, nofollow');
-  res.type('html').send(
-    renderPrintHtml(sermon, db().profile, { shareToken: sermon.share.token }),
-  );
+});
+
+// Renderizador da página pública HTML (/s/:token)
+export async function sharePage(req, res) {
+  try {
+    const { token } = req.params;
+    const sermon = await findSermonByShareToken(token);
+
+    if (!sermon) {
+      return res.status(404).type('html').send(`
+        <!doctype html>
+        <html lang="pt-BR">
+          <head><meta charset="utf-8"><title>Sermão não encontrado</title></head>
+          <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #faf7f2; color: #333;">
+            <h1>Sermão não encontrado</h1>
+            <p>Este link de compartilhamento é inválido ou foi removido.</p>
+          </body>
+        </html>
+      `);
+    }
+
+    const bodyText = typeof sermon.content === 'object' 
+      ? (sermon.content.html || sermon.content.text || JSON.stringify(sermon.content)) 
+      : sermon.content;
+
+    res.type('html').send(`
+      <!doctype html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${sermon.title} · Púlpito</title>
+          <style>
+            body { font-family: Georgia, serif; max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #211d17; background: #faf7f2; }
+            h1 { font-size: 2.2rem; border-bottom: 1px solid #e2ddd5; padding-bottom: 12px; margin-bottom: 8px; }
+            .meta { font-size: 0.85rem; color: #777; margin-bottom: 30px; font-family: sans-serif; }
+            .content { font-size: 1.1rem; line-height: 1.8; }
+          </style>
+        </head>
+        <body>
+          <h1>${sermon.title}</h1>
+          <div class="meta">Sermão compartilhado via Púlpito</div>
+          <div class="content">${bodyText}</div>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('[share page error]', err);
+    res.status(500).send('Erro interno ao exibir o sermão.');
+  }
 }
 
 export default router;
