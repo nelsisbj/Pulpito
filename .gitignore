@@ -1,0 +1,15 @@
+# Dependências e artefatos
+node_modules/
+.pnpm-store/
+server/public/
+tools/
+
+# Dados do usuário
+data/
+data-demo/
+.env
+
+# Logs e sistema
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,36 @@
+{
+  "name": "pulpito",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Púlpito — estúdio de escrita de sermões",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --watch server/src/index.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node server/src/index.js",
+    "setup": "node scripts/setup-data.mjs",
+    "seed": "node scripts/seed-demo.mjs",
+    "demo": "node scripts/demo.mjs",
+    "demo:seed": "node scripts/seed-demo-local.mjs",
+    "demo:reset": "node scripts/demo-reset.mjs",
+    "import:translation": "node scripts/import-translation.mjs",
+    "ui:check": "node scripts/ui-check.mjs",
+    "test": "node --test server/test/core.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "playwright-core": "^1.65.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.28.5"
+}
