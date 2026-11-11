@@ -4,54 +4,48 @@ import { authenticateToken } from '../middleware/auth.js';
 import crypto from 'crypto';
 
 const router = Router();
-
-// Aplica o middleware de autenticação em todas as rotas
 router.use(authenticateToken);
 
-// Extrai com segurança o ID do utilizador vindo do JWT
 function getUserId(req) {
   return req.user?.id || req.user?.userId || req.user?.sub || null;
 }
 
-// Converte objetos da base de dados (JSON/JSONB) para Strings puras que o React entende
+// Normaliza os dados do banco para o formato esperado pelo Editor.jsx
 function normalizeSermon(row) {
   if (!row) return null;
 
-  let content = row.content;
-
-  // Se o Postgres devolveu um objeto JS (devido ao tipo de coluna JSONB)
-  if (typeof content === 'object' && content !== null) {
-    content = content.text !== undefined ? content.text : (Object.keys(content).length === 0 ? '' : JSON.stringify(content));
-  } else if (typeof content === 'string') {
+  let parsedContent = {};
+  if (typeof row.content === 'object' && row.content !== null) {
+    parsedContent = row.content;
+  } else if (typeof row.content === 'string' && row.content.trim()) {
     try {
-      const parsed = JSON.parse(content);
-      if (typeof parsed === 'object' && parsed !== null && parsed.text !== undefined) {
-        content = parsed.text;
-      } else if (content === '{}' || content === '[]') {
-        content = '';
-      }
+      parsedContent = JSON.parse(row.content);
     } catch {
-      // É uma string normal, mantém como está
+      parsedContent = { text: row.content };
     }
   }
 
-  if (content === null || content === undefined) {
-    content = '';
-  }
+  const sections = parsedContent.sections || (parsedContent.introduction ? parsedContent : null);
+  const theme = row.theme || parsedContent.theme || '';
+  const tags = Array.isArray(row.tags) ? row.tags : (Array.isArray(parsedContent.tags) ? parsedContent.tags : []);
 
   return {
     ...row,
     id: String(row.id),
     user_id: String(row.user_id || ''),
     title: row.title || 'Sem título',
-    theme: row.theme || '', // Evita erro no Editor caso theme esteja ausente
-    content: String(content),
+    theme: theme,
+    tags: tags,
+    sections: sections || {
+      introduction: { html: parsedContent.text || '' },
+      developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
+      conclusion: { html: '' },
+    },
+    content: typeof row.content === 'string' ? row.content : JSON.stringify(row.content || {}),
     updated_at: row.updated_at || new Date().toISOString(),
     created_at: row.created_at || new Date().toISOString(),
   };
 }
-
-// 1. ROTAS ESPECÍFICAS (Devem ficar antes de /:id)
 
 // GET /api/sermons/stats
 router.get('/stats', async (req, res) => {
@@ -75,12 +69,10 @@ router.get('/stats', async (req, res) => {
 
 // POST /api/sermons/analyze
 router.post('/analyze', async (req, res) => {
-  res.json({ success: true });
+  res.json({ success: true, tags: [] });
 });
 
-// 2. ROTAS GERAIS E DINÂMICAS
-
-// GET /api/sermons (Listar todos os sermões)
+// GET /api/sermons (Listar todos)
 router.get('/', async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -98,7 +90,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/sermons/:id (Buscar sermão por UUID)
+// GET /api/sermons/:id (Buscar por UUID)
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -119,17 +111,20 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /api/sermons (Criar novo sermão)
+// POST /api/sermons (Criar sermão)
 router.post('/', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Sessão inválida.' });
 
-    const { title, content } = req.body || {};
+    const { title, theme, sections, tags, content } = req.body || {};
     const id = crypto.randomUUID();
-    
-    // Grava como JSON válido ({ "text": "conteudo" }) para o Postgres aceitar sem reclamar
-    const jsonContent = JSON.stringify({ text: content || '' });
+
+    const jsonContent = JSON.stringify({
+      sections: sections || { introduction: { html: content || '' }, developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }], conclusion: { html: '' } },
+      theme: theme || '',
+      tags: tags || [],
+    });
 
     const result = await pool.query(
       `INSERT INTO sermons (id, user_id, title, content, updated_at)
@@ -145,15 +140,20 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /api/sermons/:id (Atualizar sermão existente)
+// PUT /api/sermons/:id (Atualizar sermão)
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Sessão inválida.' });
 
-    const { title, content } = req.body || {};
-    const jsonContent = JSON.stringify({ text: content || '' });
+    const { title, theme, sections, tags, content } = req.body || {};
+
+    const jsonContent = JSON.stringify({
+      sections: sections || { introduction: { html: content || '' }, developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }], conclusion: { html: '' } },
+      theme: theme || '',
+      tags: tags || [],
+    });
 
     const result = await pool.query(
       'UPDATE sermons SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 AND user_id = $4 RETURNING *',
@@ -169,7 +169,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/sermons/:id (Apagar sermão)
+// DELETE /api/sermons/:id (Excluir sermão)
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
