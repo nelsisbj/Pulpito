@@ -29,6 +29,9 @@ export const HOST = process.env.HOST || '0.0.0.0';
 export const DATA_DIR = process.env.PULPITO_DATA_DIR || path.join(ROOT, 'data');
 export const CACHE_DIR = path.join(DATA_DIR, 'cache');
 export const PDF_DIR = path.join(DATA_DIR, 'pdfs');
+export const AUTO_PDF_ENABLED = process.env.PULPITO_AUTO_PDF !== '0';
+export const PDF_DELAY_MS = Math.max(1000, Number(process.env.PULPITO_PDF_DELAY_MS) || 12000);
+export const PDF_INTERVAL_MS = Math.max(PDF_DELAY_MS, Number(process.env.PULPITO_PDF_INTERVAL_MS) || 180000);
 export const DB_FILE = path.join(DATA_DIR, 'pulpito.json');
 export const PUBLIC_DIR = path.join(ROOT, 'server', 'public');
 export const QUOTES_FILE = path.join(ROOT, 'server', 'src', 'data', 'quotes.json');
@@ -42,6 +45,11 @@ export const BLOCKED_TRANSLATIONS = new Set(['NVIPT', 'NIV', 'NVI']);
 
 export const DEFAULT_TRANSLATION = process.env.DEFAULT_TRANSLATION || 'ARA';
 export const DEFAULT_COMPARE = ['ARA', 'NAA', 'NTLH'];
+const configuredJwtSecret = process.env.JWT_SECRET || '';
+if (process.env.NODE_ENV === 'production' && configuredJwtSecret.length < 32) {
+  throw new Error('Defina JWT_SECRET com pelo menos 32 caracteres no ambiente de produção.');
+}
+export const JWT_SECRET = configuredJwtSecret || 'chave-secreta-pulpito';
 export const PUBLIC_URL = process.env.PULPITO_PUBLIC_URL || process.env.PUBLIC_URL || '';
 export const ACCESS_PASSWORD = process.env.PULPITO_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || '';
 

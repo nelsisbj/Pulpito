@@ -89,10 +89,10 @@ export default function App() {
     (async () => {
       try {
         const [profileData, versionsData, list, statsData] = await Promise.all([
-          api.profile().catch(() => ({ profile: {}, sample: null })),
+          api.profile(),
           api.versions().catch(() => ({ portuguese: FALLBACK_VERSIONS })),
-          api.listSermons().catch(() => ({ sermons: [] })),
-          api.stats().catch(() => ({ total: 0, total_words: 0 })),
+          api.listSermons(),
+          api.stats(),
         ]);
         if (cancelled) return;
         applyProfile(profileData?.profile);

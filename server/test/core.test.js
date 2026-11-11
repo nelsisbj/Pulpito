@@ -13,6 +13,34 @@ import { scorePhrase } from '../src/services/suggest.js';
 import { crossReferences } from '../src/providers/crossrefs.js';
 import { getStudyNotes } from '../src/providers/commentary.js';
 import { renderPrintHtml } from '../src/services/pdf.js';
+import { chapter } from '../../web/src/lib/api.js';
+
+test('cliente da Bíblia envia versão, livro e capítulo no contrato do painel', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const calls = [];
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: () => null },
+  });
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response('{"verses":[]}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await chapter('ARA', 43, 3);
+    const url = new URL(calls[0].url, 'http://localhost');
+    assert.equal(url.pathname, '/api/bible/chapter');
+    assert.equal(url.searchParams.get('translation'), 'ARA');
+    assert.equal(url.searchParams.get('book'), '43');
+    assert.equal(url.searchParams.get('chapter'), '3');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage);
+    else delete globalThis.localStorage;
+  }
+});
 
 test('interpreta referências em português', () => {
   const ref = parseReference('João 3:16');

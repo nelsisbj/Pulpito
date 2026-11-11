@@ -8,7 +8,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch server/src/index.js",
     "dev:web": "vite",
-    "build": "npx playwright install chromium && vite build",
+    "build": "playwright-core install chromium && vite build",
     "start": "node server/src/index.js",
     "setup": "node scripts/setup-data.mjs",
     "seed": "node scripts/seed-demo.mjs",

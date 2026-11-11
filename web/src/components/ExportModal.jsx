@@ -68,18 +68,7 @@ export default function ExportModal({ open, sermon, onClose }) {
     setBusy('pdf');
     setError(null);
     try {
-      const response = await fetch(`/api/sermons/${sermon.id}/pdf`);
-      if (!response.ok) {
-        let message = 'Não foi possível gerar o PDF.';
-        try {
-          const data = await response.json();
-          if (data?.error) message = data.error;
-        } catch {
-          /* resposta não-JSON */
-        }
-        throw new Error(message);
-      }
-      const blob = await response.blob();
+      const blob = await api.sermonPdf(sermon.id);
       saveBlob(blob, `${baseName}.pdf`);
       setSaved((current) => ({
         ...(current || {}),
@@ -98,9 +87,7 @@ export default function ExportModal({ open, sermon, onClose }) {
     setBusy('backup');
     setError(null);
     try {
-      const response = await fetch(`/api/sermons/${sermon.id}/backup`);
-      if (!response.ok) throw new Error('Não foi possível gerar o backup.');
-      const blob = await response.blob();
+      const blob = await api.sermonBackup(sermon.id);
       saveBlob(blob, `${baseName}-backup.json`);
       toast('Backup JSON baixado');
     } catch (err) {
@@ -111,8 +98,26 @@ export default function ExportModal({ open, sermon, onClose }) {
     }
   };
 
-  const openPrint = () => {
-    window.open(`/api/sermons/${sermon.id}/print?auto=1`, '_blank', 'noopener');
+  const openPrint = async () => {
+    const printWindow = window.open('about:blank', '_blank');
+    if (!printWindow) {
+      setError('Permita a abertura de janelas para imprimir este sermão.');
+      return;
+    }
+    setBusy('print');
+    setError(null);
+    try {
+      const html = await api.sermonPrint(sermon.id);
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      printWindow.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      printWindow.close();
+      setError(err.message);
+      toastError(err.message);
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -171,8 +176,8 @@ export default function ExportModal({ open, sermon, onClose }) {
                 {busy === 'pdf' ? <span className="spinner" /> : <Icon name="download" size={15} />}
                 Baixar PDF
               </button>
-              <button className="btn btn-sm" onClick={openPrint}>
-                <Icon name="printer" size={15} /> Imprimir
+              <button className="btn btn-sm" onClick={openPrint} disabled={busy === 'print'}>
+                {busy === 'print' ? <span className="spinner" /> : <Icon name="printer" size={15} />} Imprimir
               </button>
             </div>
           </div>

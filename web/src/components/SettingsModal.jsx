@@ -216,9 +216,8 @@ export default function SettingsModal({
         ) : null}
 
         <p className="hint" style={{ margin: 0 }}>
-          Seus sermões ficam salvos localmente, no computador que roda o Púlpito
-          (<code>data/pulpito.json</code>). Nada é enviado para terceiros além das consultas à API
-          bíblica.
+          Seus sermões e preferências ficam salvos no banco de dados do Púlpito. Consultas de texto
+          bíblico são enviadas ao provedor Bolls.
         </p>
         {error ? <p className="hint" style={{ color: 'var(--danger)' }}>{error}</p> : null}
       </div>

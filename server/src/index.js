@@ -10,7 +10,7 @@ import studyRoutes from './routes/study.js';
 import sermonRoutes from './routes/sermons.js';
 import profileRoutes from './routes/profile.js';
 import musicRoutes from './routes/music.js';
-import shareRoutes, { sharePage } from './routes/share.js';
+import shareRoutes, { sharePage, sharePdf } from './routes/share.js';
 import { BibleError } from './providers/bolls.js';
 import { closePdfBrowser } from './services/pdf.js';
 import authRoutes from './routes/auth.js';
@@ -108,6 +108,7 @@ app.use('/api/sermons', sermonRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/music', musicRoutes);
 app.use('/api/share', shareRoutes);
+app.get('/s/:token/pdf', sharePdf);
 app.get('/s/:token', sharePage);
 app.use('/api/auth', authRoutes);
 

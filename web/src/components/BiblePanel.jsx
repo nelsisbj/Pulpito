@@ -256,7 +256,7 @@ export default function BiblePanel({
     if (q.length < 3) return;
     setSearching(true);
     try {
-      const result = await api.searchBible(q, translation);
+      const result = await api.search(q, translation);
       setResults(result.results || []);
     } catch (err) {
       setError(err.message);

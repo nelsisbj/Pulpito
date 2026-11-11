@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { pool } from '../db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import crypto from 'crypto';
+import { sermonMetrics } from '../services/timing.js';
+import { renderPrintHtml, renderSermonPdf, schedulePdfBackup } from '../services/pdf.js';
 
 const router = Router();
 router.use(authenticateToken);
@@ -28,6 +30,13 @@ function normalizeSermon(row) {
   const sections = parsedContent.sections || (parsedContent.introduction ? parsedContent : null);
   const theme = row.theme || parsedContent.theme || '';
   const tags = Array.isArray(row.tags) ? row.tags : (Array.isArray(parsedContent.tags) ? parsedContent.tags : []);
+  const updatedAt = row.updated_at || new Date().toISOString();
+  const createdAt = row.created_at || updatedAt;
+  const normalizedSections = sections || {
+    introduction: { html: parsedContent.text || '' },
+    developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
+    conclusion: { html: '' },
+  };
 
   return {
     ...row,
@@ -36,14 +45,14 @@ function normalizeSermon(row) {
     title: row.title || 'Sem título',
     theme: theme,
     tags: tags,
-    sections: sections || {
-      introduction: { html: parsedContent.text || '' },
-      developments: [{ id: 'dev_1', title: 'Ponto 1', html: '' }],
-      conclusion: { html: '' },
-    },
+    pdf: parsedContent.pdf || (parsedContent.pdfPath ? { generatedAt: row.updated_at } : null),
+    sections: normalizedSections,
+    metrics: sermonMetrics({ sections: normalizedSections }),
     content: typeof row.content === 'string' ? row.content : JSON.stringify(row.content || {}),
-    updated_at: row.updated_at || new Date().toISOString(),
-    created_at: row.created_at || new Date().toISOString(),
+    updated_at: updatedAt,
+    created_at: createdAt,
+    updatedAt,
+    createdAt,
   };
 }
 
@@ -53,14 +62,23 @@ router.get('/stats', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Sessão inválida.' });
 
-    const result = await pool.query(
-      `SELECT 
-        COUNT(*)::int as total,
-        COALESCE(SUM(LENGTH(content::text)), 0)::int as total_words
-       FROM sermons WHERE user_id = $1`,
-      [userId]
-    );
-    res.json(result.rows[0] || { total: 0, total_words: 0 });
+    const result = await pool.query('SELECT * FROM sermons WHERE user_id = $1', [userId]);
+    const sermons = result.rows.map(normalizeSermon);
+    const metrics = sermons.map((sermon) => sermonMetrics(sermon));
+    const totalMinutes = metrics.reduce((sum, item) => sum + item.minutes, 0);
+    const tagCounts = new Map();
+    for (const sermon of sermons) {
+      for (const tag of sermon.tags || []) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+    }
+    const topTags = [...tagCounts].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, 8);
+    res.json({
+      total: sermons.length,
+      totalSermons: sermons.length,
+      total_words: metrics.reduce((sum, item) => sum + item.words, 0),
+      totalMinutes,
+      averageMinutes: sermons.length ? totalMinutes / sermons.length : 0,
+      topTags,
+    });
   } catch (err) {
     console.error('[stats error]', err);
     res.status(500).json({ error: 'Erro ao buscar estatísticas.' });
@@ -69,7 +87,10 @@ router.get('/stats', async (req, res) => {
 
 // POST /api/sermons/analyze
 router.post('/analyze', async (req, res) => {
-  res.json({ success: true, tags: [] });
+  const { detectTags } = await import('../services/tags.js');
+  const text = String(req.body?.text || '');
+  const tags = detectTags(text, { title: req.body?.title || '', theme: req.body?.theme || '' });
+  res.json({ success: true, tags });
 });
 
 // GET /api/sermons (Listar todos)
@@ -90,6 +111,41 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/:id/backup', async (req, res) => {
+  try {
+    const sermon = await ownedSermon(req.params.id, getUserId(req));
+    if (!sermon) return res.status(404).json({ error: 'Sermão não encontrado.' });
+    res.setHeader('Content-Disposition', `attachment; filename="sermon-${req.params.id}-backup.json"`);
+    res.json(normalizeSermon(sermon));
+  } catch (err) {
+    console.error('[sermon backup error]', err);
+    res.status(500).json({ error: 'Erro ao criar o backup.' });
+  }
+});
+
+router.get('/:id/print', async (req, res) => {
+  try {
+    const sermon = await ownedSermon(req.params.id, getUserId(req));
+    if (!sermon) return res.status(404).json({ error: 'Sermão não encontrado.' });
+    res.type('html').send(renderPrintHtml(normalizeSermon(sermon), { autoPrint: req.query.auto === '1' }));
+  } catch (err) {
+    console.error('[sermon print error]', err);
+    res.status(500).json({ error: 'Erro ao preparar a impressão.' });
+  }
+});
+
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const sermon = await ownedSermon(req.params.id, getUserId(req));
+    if (!sermon) return res.status(404).json({ error: 'Sermão não encontrado.' });
+    const pdfPath = await renderSermonPdf(req.params.id, renderPrintHtml(normalizeSermon(sermon)), getUserId(req));
+    res.download(pdfPath, `sermon-${req.params.id}.pdf`);
+  } catch (err) {
+    console.error('[sermon pdf error]', err);
+    res.status(500).json({ error: 'Não foi possível gerar o PDF. Confira se o Chromium está instalado no servidor.' });
+  }
+});
+
 // GET /api/sermons/:id (Buscar por UUID)
 router.get('/:id', async (req, res) => {
   try {
@@ -104,7 +160,9 @@ router.get('/:id', async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Sermão não encontrado.' });
     }
-    res.json(normalizeSermon(result.rows[0]));
+    const sermon = normalizeSermon(result.rows[0]);
+    schedulePdfBackup(sermon, userId);
+    res.json(sermon);
   } catch (err) {
     console.error('[sermon get by id error]', err);
     res.status(500).json({ error: 'Erro ao procurar o sermão.' });
@@ -156,7 +214,9 @@ router.put('/:id', async (req, res) => {
     });
 
     const result = await pool.query(
-      'UPDATE sermons SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 AND user_id = $4 RETURNING *',
+      `UPDATE sermons SET title = $1,
+       content = (COALESCE(content, '{}'::jsonb) - 'sections' - 'theme' - 'tags') || $2::jsonb,
+       updated_at = NOW() WHERE id = $3 AND user_id = $4 RETURNING *`,
       [title || 'Sem título', jsonContent, id, userId]
     );
     if (!result.rows.length) {

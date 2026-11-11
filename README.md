@@ -8,8 +8,9 @@ poluição de um editor genérico. A tela é organizada em **introdução**,
 bíblico aparece quando você precisa, e o tempo da pregação é estimado a partir
 do seu próprio ritmo de leitura.
 
-Backend em **Node.js + Express**, frontend em **React + Vite**, dados locais em
-JSON. Sem cadastro, sem nuvem obrigatória: tudo fica na sua máquina.
+Backend em **Node.js + Express**, frontend em **React + Vite** e persistência de
+sermões, contas e preferências em **PostgreSQL**. A Bíblia usa a API pública da
+Bolls; caches e arquivos PDF ficam no diretório de dados do servidor.
 
 ![Biblioteca](screenshots/01-library.png)
 
@@ -115,7 +116,8 @@ HOST=0.0.0.0
 PORT=4000
 ```
 
-1. Reinicie o Púlpito.
+1. Defina `PULPITO_ALLOW_REMOTE_EDIT=1` no ambiente do servidor e reinicie o
+  Púlpito. O editor exige uma conta autenticada.
 2. No editor, clique em **Compartilhar** e crie o link.
 3. O painel mostra o endereço de rede, por exemplo
    `http://192.168.1.28:4000/s/...`. Envie esse link.
@@ -136,11 +138,10 @@ acessível. Para abrir fora de casa, as opções são:
 - definir `PULPITO_PUBLIC_URL=https://seu-endereco` para o painel montar o link
   público.
 
-> **Segurança:** o app não tem login. Na rede local, o Púlpito bloqueia o
-> editor para outros IPs e libera apenas `/s/<token>` e `/api/share/*`. Atrás de
-> um túnel, o servidor pode enxergar a conexão como local; nesse caso, proteja o
-> túnel com autenticação ou use uma hospedagem com login. Não use
-> `PULPITO_ALLOW_REMOTE_EDIT=1` em rede pública.
+> **Segurança:** o editor exige login, mesmo quando `PULPITO_ALLOW_REMOTE_EDIT=1`
+> libera o acesso remoto à tela. Use um `JWT_SECRET` forte e proteja o acesso ao
+> banco. Os links `/s/<token>` são públicos para quem possui o endereço; revogue
+> o link caso ele seja compartilhado indevidamente.
 
 ### Se a outra pessoa não conseguir abrir
 
@@ -158,12 +159,13 @@ acessível. Para abrir fora de casa, as opções são:
 | --- | --- |
 | Frontend | React 18, Vite 5, CSS próprio (sem framework de UI) |
 | Backend | Node.js 20+, Express 4 |
-| Persistência | JSON local (`data/pulpito.json`) com escrita atômica |
+| Persistência | PostgreSQL para contas e sermões; diretório `data/` para cache e PDFs |
 | Bíblia | [bolls.life](https://bolls.life) (sem chave) |
 | Referências cruzadas | OpenBible.info (CC-BY) |
 | Testes | `node:test` + Playwright (verificação de UI) |
 
-Sem banco externo, sem Docker, sem login.
+O PostgreSQL é obrigatório. Em produção, use o banco ligado ao serviço Render e
+configure `DATABASE_URL` e `JWT_SECRET` nas variáveis do serviço web.
 
 ---
 
@@ -191,13 +193,18 @@ copy .env.example .env      # Windows; no Linux/macOS: cp .env.example .env
 pnpm setup                  # opcional: regenera o índice de citações
 ```
 
+Configure `DATABASE_URL` para um PostgreSQL acessível antes de iniciar o
+servidor. No Render, use a URL interna do banco e defina também um `JWT_SECRET`
+aleatório e estável. O servidor cria as tabelas necessárias na primeira
+inicialização. Para permitir o acesso remoto à tela de login, configure
+`PULPITO_ALLOW_REMOTE_EDIT=1`; as rotas privadas continuam exigindo autenticação.
+
 > `pnpm setup` só é necessário se você quiser atualizar `quotes.json` ou se os
 > dados não vierem no pacote. Os dados de referências cruzadas e citações já
 > estão incluídos.
 >
-> O `.env` não é versionado. Em um clone novo, ele não existe: sem ele o app
-> escuta em `127.0.0.1`. Para compartilhar na rede, coloque `HOST=0.0.0.0` no
-> `.env` e reinicie.
+> O `.env` não é versionado. Em um clone novo, configure nele o `DATABASE_URL`
+> local e o `JWT_SECRET`; para compartilhar na rede, use `HOST=0.0.0.0`.
 
 ### Desenvolvimento
 
@@ -230,10 +237,8 @@ O `server/public/` é gerado pelo build e não é versionado.
 6. Abra **Estudo** em uma referência para Strong's, referências cruzadas e notas.
 7. Calibre seu ritmo em **Calibrar leitura** para ver o tempo real da mensagem.
 
-> Em um clone novo, a biblioteca começa **vazia** (`data/pulpito.json` é criado
-> no primeiro uso). Para criar os três sermões de exemplo, deixe a API rodando e,
-> em outro terminal, execute `pnpm seed`. A demo (`pnpm demo`) já nasce com os
-> exemplos dela em `data-demo/`.
+> No primeiro acesso, crie uma conta pela tela de entrada. A biblioteca começa
+> vazia; os sermões de exemplo podem ser criados com `pnpm seed`.
 
 ### Demo para amigos (caminho A)
 
@@ -302,11 +307,13 @@ pnpm demo:reset
 
 ## Configuração (`.env`)
 
-Copie `.env.example` para `.env` e preencha o que quiser. Nada é obrigatório.
+Copie `.env.example` para `.env` e configure o PostgreSQL e o segredo de sessão.
 
 ```env
 PORT=4000
-HOST=127.0.0.1
+DATABASE_URL=postgres://usuario:senha@localhost:5432/pulpito
+JWT_SECRET=gere-um-segredo-longo-e-aleatorio
+HOST=0.0.0.0
 DEFAULT_TRANSLATION=ARA
 
 # Busca automática de música (opcional)
@@ -321,9 +328,8 @@ SPOTIFY_CLIENT_SECRET=
 # CHROME_PATH=C:\caminho\chrome.exe
 ```
 
-`HOST=127.0.0.1` mantém o app só na sua máquina. Para abrir na rede local
-(celular, outro computador), use `HOST=0.0.0.0` — **não há login**, então faça
-isso apenas em rede confiável.
+O editor exige login. `HOST=0.0.0.0` permite conexões pela rede; para liberar o
+acesso remoto à tela de login, configure `PULPITO_ALLOW_REMOTE_EDIT=1`.
 
 Sem as chaves de música, tudo continua funcionando por **links colados**,
 **sugestões** e **som ambiente**.
@@ -337,7 +343,7 @@ pulpito/
 ├─ server/
 │  ├─ src/
 │  │  ├─ index.js              # Express, rotas, estáticos
-│  │  ├─ db.js                 # armazenamento JSON, sermões, perfil, notas
+│  │  ├─ db.js                 # PostgreSQL e criação idempotente das tabelas
 │  │  ├─ providers/
 │  │  │  ├─ bolls.js           # Bíblia, Strong's, cache memória+disco
 │  │  │  ├─ localBible.js      # traduções licenciadas em data/translations
@@ -366,8 +372,7 @@ pulpito/
 │  ├─ seed-demo.mjs            # cria sermões de demonstração
 │  ├─ import-translation.mjs   # importa uma tradução licenciada
 │  └─ ui-check*.mjs            # verificações com Playwright
-├─ data/                       # dados do usuário (gerado em runtime)
-│  ├─ pulpito.json             # sermões, perfil, notas
+├─ data/                       # arquivos gerados em runtime
 │  ├─ pdfs/                    # cópias de segurança em PDF
 │  └─ cache/                   # cache da Bíblia
 └─ screenshots/
@@ -389,25 +394,23 @@ Todas as rotas abaixo estão sob `/api`.
 | GET | `/bible/search?q=&translation=` | Busca textual |
 | GET | `/bible/suggest?q=` | Sugestão de citação |
 | GET | `/study/reference?ref=` | Passagem + cruzadas + notas |
-| GET | `/study/crossrefs?ref=` | Referências cruzadas |
-| GET | `/study/strongs/:id` | Verbete Strong |
-| GET | `/study/strongs/search?q=` | Busca no léxico |
-| GET/PUT | `/study/notes` | Notas pessoais por referência |
+| GET | `/study/strong/:id` | Verbete Strong |
+| GET | `/study/strong/search?q=` | Busca no léxico |
+| GET | `/study/strong/popular` | Atalhos Strong |
+| GET/PUT | `/study/notes/:key` | Nota pessoal por referência |
 | GET/POST | `/sermons` | Lista/cria sermões |
 | GET/PUT/DELETE | `/sermons/:id` | Lê/edita/exclui |
 | GET | `/sermons/:id/pdf` | Gera/baixa o PDF (e atualiza a cópia) |
 | GET | `/sermons/:id/print` | HTML de impressão (`?auto=1` abre o diálogo) |
 | GET | `/sermons/:id/backup` | Backup completo em JSON |
-| GET | `/sermons/:id/share` | Consulta o link de leitura |
-| POST | `/sermons/:id/share` | Cria o link de leitura |
-| DELETE | `/sermons/:id/share` | Revoga o link |
+| GET | `/share/sermons/:id` | Consulta o link de leitura |
+| POST | `/share/sermons/:id` | Cria o link de leitura |
+| DELETE | `/share/sermons/:id` | Revoga o link |
 | GET | `/s/:token` | Página pública somente leitura |
-| GET | `/api/share/:token` | Dados públicos do sermão |
-| GET | `/api/share/:token/pdf` | PDF da página compartilhada |
-| GET | `/api/share/:token/print` | Impressão da página compartilhada |
+| GET | `/s/:token/pdf` | PDF da página compartilhada |
 | GET | `/sermons/stats` | Estatísticas e temas |
 | GET/PUT | `/profile` | Perfil e preferências |
-| POST | `/profile/calibration` | Calcula e salva o ritmo |
+| POST | `/profile/calibrate` | Calcula e salva o ritmo |
 | GET | `/music/featured` | Sugestões de música |
 | GET | `/music/search?q=&provider=` | Busca YouTube/Spotify |
 
@@ -415,16 +418,15 @@ Todas as rotas abaixo estão sob `/api`.
 
 ## Dados e privacidade
 
-- Por padrão, o servidor escuta apenas em `127.0.0.1`. Com `HOST=0.0.0.0`, ele
-  abre na rede, mas bloqueia o editor para outros IPs (só os links `/s/...`
-  ficam públicos).
-- Sermões e perfil ficam em `data/pulpito.json` (fora do controle de versão).
+- O servidor escuta em `0.0.0.0` por padrão. O acesso remoto ao editor exige
+  `PULPITO_ALLOW_REMOTE_EDIT=1` e login; links `/s/...` são públicos por token.
+- Contas, sermões e notas ficam no PostgreSQL definido por `DATABASE_URL`.
 - Cópias de segurança em PDF ficam em `data/pdfs/`.
 - Cache da Bíblia em `data/cache/`.
 - Nenhum analytics. As únicas chamadas externas são à API bíblica e, se você
   usar, aos players/buscas de música.
-- **Backup**: copie `data/pulpito.json` e a pasta `data/pdfs/`. Para migrar,
-  basta levar esses arquivos.
+- **Backup**: faça backup do PostgreSQL e da pasta `data/pdfs/`. Para manter os
+  PDFs do Render entre deploys, conecte um disco persistente ao serviço.
 
 ## Versionamento e GitHub
 
@@ -464,7 +466,7 @@ Se o repositório for público, escolha uma licença antes (MIT é a mais simple
 sem licença, os direitos ficam reservados por padrão) e revise os créditos das
 traduções e do OpenBible.
 
-> GitHub Pages **não roda** este app: ele precisa do Express, do banco local e
+> GitHub Pages **não roda** este app: ele precisa do Express, do PostgreSQL e
 > (para PDF) do Chrome. Use uma VPS, Render/Railway/Fly.io ou o túnel do demo.
 > O GitHub serve para versionar, revisar e rodar a CI.
 
@@ -545,7 +547,7 @@ Existem três caminhos legais:
 pnpm test
 ```
 
-18 testes cobrem parser de referências (incluindo ambiguidade Jó/João), contagem
+19 testes cobrem o contrato da API bíblica, parser de referências (incluindo ambiguidade Jó/João), contagem
 de palavras, sanitização de HTML, estimativa de tempo, temas, citações,
 referências cruzadas, notas de estudo e o HTML de impressão do PDF.
 
@@ -563,11 +565,10 @@ Os scripts geram capturas em `screenshots/` e apagam o sermão de teste ao final
 
 ## Limitações e próximos passos
 
-- **Um usuário local**. Não há login nem sincronização entre dispositivos; a
-  estrutura do `db.js` permite adicionar contas depois.
+- **Contas autenticadas**. Cada conta mantém sua própria biblioteca no PostgreSQL.
 - **Comentários externos** não vêm habilitados por licenciamento (ver acima).
 - **Busca de música** depende de chaves oficiais; o modo offline é o som gerado.
-- **Exportação** para PDF/DOCX ainda não incluída (o texto pode ser copiado).
+- **Exportação** para PDF e backup JSON; DOCX ainda não incluído.
 - **Mobile**: o editor funciona, com painel lateral em gaveta; a experiência é
   otimizada para desktop.
 - A NVI não está disponível por restrição da editora.

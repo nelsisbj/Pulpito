@@ -1,10 +1,10 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '../config.js';
 import { pool } from '../db.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'chave-secreta-pulpito';
 
 export function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -23,14 +23,14 @@ export function requireAuth(req, res, next) {
 }
 
 router.post('/register', async (req, res) => {
-  const { email, password } = req.body;
+  const { name, email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
 
   try {
     const hash = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email',
-      [email.toLowerCase().trim(), hash]
+      'INSERT INTO users (email, password_hash, profile) VALUES ($1, $2, $3) RETURNING id, email, profile',
+      [email.toLowerCase().trim(), hash, JSON.stringify({ name: String(name || '').trim() })]
     );
 
     const token = jwt.sign({ userId: result.rows[0].id }, JWT_SECRET, { expiresIn: '7d' });

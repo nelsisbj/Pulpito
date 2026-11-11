@@ -1,14 +1,70 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import { pool } from '../db.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { renderPrintHtml } from '../services/pdf.js';
 
 const router = express.Router();
+
+function userId(req) {
+  return req.user?.userId || req.user?.id || req.user?.sub;
+}
+
+async function ownedSermon(id, ownerId) {
+  const result = await pool.query('SELECT * FROM sermons WHERE id = $1 AND user_id = $2', [id, ownerId]);
+  return result.rows[0] || null;
+}
+
+router.get('/sermons/:id', authenticateToken, async (req, res) => {
+  try {
+    const sermon = await ownedSermon(req.params.id, userId(req));
+    if (!sermon) return res.status(404).json({ error: 'Sermão não encontrado.' });
+    const share = sermon.content?.share || (sermon.content?.shareToken ? { token: sermon.content.shareToken } : null);
+    res.json({ share });
+  } catch (err) {
+    console.error('[share status error]', err);
+    res.status(500).json({ error: 'Erro ao verificar o link de compartilhamento.' });
+  }
+});
+
+router.post('/sermons/:id', authenticateToken, async (req, res) => {
+  try {
+    const sermon = await ownedSermon(req.params.id, userId(req));
+    if (!sermon) return res.status(404).json({ error: 'Sermão não encontrado.' });
+    const share = { token: crypto.randomBytes(24).toString('base64url'), createdAt: new Date().toISOString() };
+    await pool.query(
+      `UPDATE sermons SET content = jsonb_set(COALESCE(content, '{}'::jsonb), '{share}', $1::jsonb, true)
+       WHERE id = $2 AND user_id = $3`,
+      [JSON.stringify(share), req.params.id, userId(req)]
+    );
+    res.status(201).json({ share });
+  } catch (err) {
+    console.error('[share create error]', err);
+    res.status(500).json({ error: 'Erro ao criar o link de compartilhamento.' });
+  }
+});
+
+router.delete('/sermons/:id', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE sermons SET content = COALESCE(content, '{}'::jsonb) - 'share' - 'shareToken'
+       WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [req.params.id, userId(req)]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Sermão não encontrado.' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[share revoke error]', err);
+    res.status(500).json({ error: 'Erro ao revogar o link.' });
+  }
+});
 
 // Busca o sermão pelo token de compartilhamento salvo em content (JSONB)
 export async function findSermonByShareToken(token) {
   const result = await pool.query(
     `SELECT * FROM sermons 
-     WHERE content->>'shareToken' = $1 
-        OR content->'share'->>'token' = $1 
+    WHERE content->>'shareToken' = $1
+      OR content->'share'->>'token' = $1
      LIMIT 1`,
     [token]
   );
@@ -57,34 +113,25 @@ export async function sharePage(req, res) {
       `);
     }
 
-    const bodyText = typeof sermon.content === 'object' 
-      ? (sermon.content.html || sermon.content.text || JSON.stringify(sermon.content)) 
-      : sermon.content;
-
-    res.type('html').send(`
-      <!doctype html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>${sermon.title} · Púlpito</title>
-          <style>
-            body { font-family: Georgia, serif; max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #211d17; background: #faf7f2; }
-            h1 { font-size: 2.2rem; border-bottom: 1px solid #e2ddd5; padding-bottom: 12px; margin-bottom: 8px; }
-            .meta { font-size: 0.85rem; color: #777; margin-bottom: 30px; font-family: sans-serif; }
-            .content { font-size: 1.1rem; line-height: 1.8; }
-          </style>
-        </head>
-        <body>
-          <h1>${sermon.title}</h1>
-          <div class="meta">Sermão compartilhado via Púlpito</div>
-          <div class="content">${bodyText}</div>
-        </body>
-      </html>
-    `);
+    const html = renderPrintHtml({ ...sermon, ...(sermon.content || {}) });
+    const toolbar = `<nav style="display:flex;justify-content:flex-end;gap:8px;margin:0 0 28px;font:14px Arial,sans-serif"><a href="/s/${encodeURIComponent(token)}/pdf" style="padding:9px 12px;color:#211d17">Baixar PDF</a><button onclick="window.print()" style="padding:9px 12px;cursor:pointer">Imprimir</button></nav>`;
+    res.type('html').send(html.replace('<body>', `<body>${toolbar}`).replace('</body>', '<p class="shared-note">Sermão compartilhado via Púlpito</p></body>'));
   } catch (err) {
     console.error('[share page error]', err);
     res.status(500).send('Erro interno ao exibir o sermão.');
+  }
+}
+
+export async function sharePdf(req, res) {
+  try {
+    const sermon = await findSermonByShareToken(req.params.token);
+    if (!sermon) return res.status(404).json({ error: 'Sermão não encontrado ou link expirado.' });
+    const html = renderPrintHtml({ ...sermon, ...(sermon.content || {}) });
+    const pdfPath = await renderSermonPdf(sermon.id, html);
+    res.download(pdfPath, `sermon-${sermon.id}.pdf`);
+  } catch (err) {
+    console.error('[shared sermon pdf error]', err);
+    res.status(500).json({ error: 'Não foi possível gerar o PDF compartilhado.' });
   }
 }
 
