@@ -150,3 +150,7 @@ export const api = {
 };
 
 export default api;
+
+export async function suggest(candidate, translation, signal) {
+  return request(`/suggest?q=${encodeURIComponent(candidate)}&t=${encodeURIComponent(translation)}`, { signal });
+}
