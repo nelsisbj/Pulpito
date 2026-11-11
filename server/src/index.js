@@ -101,6 +101,7 @@ app.get('/api/network', (_req, res) => {
   });
 });
 
+app.use(express.json());
 app.use('/api/bible', bibleRoutes);
 app.use('/api/study', studyRoutes);
 app.use('/api/sermons', sermonRoutes);

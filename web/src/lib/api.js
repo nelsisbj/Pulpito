@@ -120,7 +120,7 @@ export async function analyze(text, title, theme) {
 }
 
 export async function suggest(candidate, translation, signal) {
-  return request(`/suggest?q=${encodeURIComponent(candidate)}&t=${encodeURIComponent(translation)}`, { signal });
+  return request(`/bible/suggest?q=${encodeURIComponent(candidate)}&t=${encodeURIComponent(translation)}`, { signal });
 }
 
 export async function musicFeatured() {
